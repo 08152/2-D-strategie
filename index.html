@@ -3,83 +3,1819 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WW2 2D Strategie</title>
+<title>WW2 Tactical 2D</title>
+
 <style>
-    * { box-sizing: border-box; }
+*{
+    box-sizing:border-box;
+}
 
-    html, body {
-        margin: 0;
-        width: 100%;
-        height: 100%;
-        overflow: hidden;
-        background: #101410;
-        font-family: Arial, sans-serif;
-        color: white;
-        user-select: none;
+html,body{
+    margin:0;
+    width:100%;
+    height:100%;
+    overflow:hidden;
+    background:#182018;
+    font-family:Arial,sans-serif;
+}
+
+canvas{
+    display:block;
+    width:100vw;
+    height:100vh;
+    background:#567346;
+    cursor:crosshair;
+}
+
+#ui{
+    position:fixed;
+    left:12px;
+    top:12px;
+    width:290px;
+    padding:12px;
+    background:rgba(12,17,12,.94);
+    color:white;
+    border:2px solid #68745f;
+    border-radius:8px;
+    z-index:10;
+    user-select:none;
+}
+
+#ui h2{
+    margin:0 0 8px;
+    font-size:19px;
+}
+
+.description{
+    font-size:12px;
+    color:#c7c7c7;
+    margin-bottom:10px;
+}
+
+button{
+    color:white;
+    background:#303d2d;
+    border:1px solid #829078;
+    border-radius:5px;
+    padding:7px 9px;
+    margin:2px;
+    cursor:pointer;
+}
+
+button:hover{
+    background:#4d6147;
+}
+
+button.active{
+    background:#856c20;
+}
+
+#selected{
+    margin-top:9px;
+    background:#20271e;
+    border-radius:5px;
+    padding:8px;
+    font-size:13px;
+    line-height:1.5;
+}
+
+#status{
+    margin-top:8px;
+    font-size:12px;
+    color:#e5d98a;
+}
+
+#topbar{
+    position:fixed;
+    left:320px;
+    right:0;
+    top:0;
+    height:43px;
+    padding:0 15px;
+    display:flex;
+    align-items:center;
+    gap:25px;
+    color:white;
+    background:rgba(0,0,0,.6);
+    z-index:5;
+    pointer-events:none;
+}
+
+#help{
+    position:fixed;
+    right:12px;
+    bottom:12px;
+    padding:8px 11px;
+    color:#eee;
+    background:rgba(0,0,0,.75);
+    border-radius:5px;
+    font-size:12px;
+    z-index:5;
+}
+</style>
+</head>
+
+<body>
+
+<canvas id="game"></canvas>
+
+<div id="ui">
+
+<h2>WW2 Tactical</h2>
+
+<div class="description">
+Wähle eine blaue Einheit und klicke anschließend auf das Gelände.
+</div>
+
+<button id="fight">⚔ Kämpfen</button>
+<button id="hold">■ Halten</button>
+<button id="retreat">↩ Rückzug</button>
+<button id="stop">● Stopp</button>
+
+<div id="selected">
+Keine Einheit ausgewählt.
+</div>
+
+<div id="status">
+Bereit.
+</div>
+
+</div>
+
+<div id="topbar">
+<span id="blueCount">Blaue: 4</span>
+<span id="redCount">Rote: 0</span>
+<span id="fps">FPS: --</span>
+</div>
+
+<div id="help">
+Linksklick = auswählen / bewegen<br>
+WASD oder Pfeiltasten = Kamera<br>
+Mausrad = Zoom<br>
+F = Kamera auf Einheit
+</div>
+
+
+<script>
+
+"use strict";
+
+
+// ============================================================
+// CANVAS
+// ============================================================
+
+const canvas=document.getElementById("game");
+const ctx=canvas.getContext("2d");
+
+let W=innerWidth;
+let H=innerHeight;
+
+canvas.width=W;
+canvas.height=H;
+
+addEventListener("resize",()=>{
+    W=innerWidth;
+    H=innerHeight;
+
+    canvas.width=W;
+    canvas.height=H;
+});
+
+
+// ============================================================
+// FARBEN
+// ============================================================
+
+const COLORS={
+
+    ground1:"#597847",
+    ground2:"#527042",
+
+    treeDark:"#163d1c",
+    tree:"#225b27",
+    treeLight:"#317234",
+    trunk:"#68452b",
+
+    trench:"#392719",
+    trenchLight:"#59432d",
+
+    rock:"#77704f",
+
+    blue:"#168cff",
+    blueDark:"#0755a0",
+
+    yellow:"#ffd400",
+    yellowDark:"#aa8500",
+
+    red:"#e32626",
+    redDark:"#8c1111",
+
+    white:"#ffffff",
+
+    hp:"#4ed45a"
+};
+
+
+// ============================================================
+// WELT
+// ============================================================
+
+const CHUNK_SIZE=640;
+
+const chunks=new Map();
+
+function hash(x,y){
+
+    let n=Math.sin(
+        x*127.1+
+        y*311.7+
+        91.37
+    )*43758.5453123;
+
+    return n-Math.floor(n);
+}
+
+function getChunk(cx,cy){
+
+    const key=cx+","+cy;
+
+    if(chunks.has(key))
+        return chunks.get(key);
+
+    const chunk={
+        cx,
+        cy,
+        trees:[],
+        trenches:[],
+        rocks:[],
+        grass:[]
+    };
+
+    // BÄUME
+
+    const treeCount=12+
+        Math.floor(hash(cx,cy)*18);
+
+    for(let i=0;i<treeCount;i++){
+
+        chunk.trees.push({
+
+            x:30+
+                hash(cx*31+i,cy*17+i)*580,
+
+            y:30+
+                hash(cx*13+i,cy*41+i)*580,
+
+            r:11+
+                hash(cx*71+i,cy*29+i)*8
+        });
     }
 
-    #game {
-        display: block;
-        width: 100vw;
-        height: 100vh;
-        cursor: crosshair;
-        background: #273322;
+
+    // SCHÜTZENGRÄBEN
+
+    const trenchCount=
+        Math.floor(hash(cx+100,cy+200)*3);
+
+    for(let i=0;i<trenchCount;i++){
+
+        let horizontal=
+            hash(cx+i*9,cy+i*3)>.5;
+
+        chunk.trenches.push({
+
+            x:70+
+                hash(cx+i*3,cy+i*8)*470,
+
+            y:70+
+                hash(cx+i*7,cy+i*2)*470,
+
+            w:horizontal?210:32,
+
+            h:horizontal?32:210
+        });
     }
 
-    #ui {
-        position: fixed;
-        top: 10px;
-        left: 10px;
-        z-index: 10;
-        background: rgba(15, 18, 15, .9);
-        border: 1px solid #66705b;
-        border-radius: 8px;
-        padding: 10px;
-        min-width: 250px;
-        box-shadow: 0 5px 20px rgba(0,0,0,.4);
+
+    // FELSEN
+
+    const rockCount=
+        3+
+        Math.floor(hash(cx+50,cy+80)*7);
+
+    for(let i=0;i<rockCount;i++){
+
+        chunk.rocks.push({
+
+            x:30+
+                hash(cx+i*5,cy+i*9)*580,
+
+            y:30+
+                hash(cx+i*8,cy+i*4)*580,
+
+            r:5+
+                hash(cx+i*2,cy+i*6)*9
+        });
     }
 
-    #ui h2 {
-        margin: 0 0 8px;
-        font-size: 17px;
+
+    chunks.set(key,chunk);
+
+    return chunk;
+}
+
+
+// ============================================================
+// KAMERA
+// ============================================================
+
+let camera={
+    x:80,
+    y:-30
+};
+
+let zoom=1;
+
+let keys={};
+
+addEventListener("keydown",e=>{
+    keys[e.key.toLowerCase()]=true;
+});
+
+addEventListener("keyup",e=>{
+    keys[e.key.toLowerCase()]=false;
+});
+
+function updateCamera(dt){
+
+    const speed=350/zoom;
+
+    if(keys["w"]||keys["arrowup"])
+        camera.y-=speed*dt;
+
+    if(keys["s"]||keys["arrowdown"])
+        camera.y+=speed*dt;
+
+    if(keys["a"]||keys["arrowleft"])
+        camera.x-=speed*dt;
+
+    if(keys["d"]||keys["arrowright"])
+        camera.x+=speed*dt;
+
+    if(keys["f"] && selected){
+
+        camera.x=selected.x;
+        camera.y=selected.y;
+    }
+}
+
+function worldToScreen(x,y){
+
+    return {
+
+        x:
+            W/2+
+            (x-camera.x)*zoom,
+
+        y:
+            H/2+
+            (y-camera.y)*zoom
+    };
+}
+
+function screenToWorld(x,y){
+
+    return {
+
+        x:
+            (x-W/2)/zoom+
+            camera.x,
+
+        y:
+            (y-H/2)/zoom+
+            camera.y
+    };
+}
+
+canvas.addEventListener("wheel",e=>{
+
+    e.preventDefault();
+
+    zoom*=e.deltaY<0?1.1:.9;
+
+    zoom=Math.max(
+        .45,
+        Math.min(2.5,zoom)
+    );
+
+},{passive:false});
+
+
+// ============================================================
+// EINHEITEN
+// ============================================================
+
+let units=[];
+let selected=null;
+let nextId=1;
+
+function createUnit(
+    team,
+    type,
+    x,
+    y
+){
+
+    const mg=type==="mg";
+
+    const u={
+
+        id:nextId++,
+
+        team,
+        type,
+
+        x,
+        y,
+
+        targetX:x,
+        targetY:y,
+
+        hp:100,
+
+        speed:
+            mg?48:60,
+
+        ammo:
+            mg?60:8,
+
+        maxAmmo:
+            mg?60:8,
+
+        fireRate:
+            mg?.1:1,
+
+        reloadTime:
+            mg?5:2,
+
+        reloadTimer:0,
+
+        shotTimer:0,
+
+        range:
+            mg?310:260,
+
+        command:
+            team==="red"
+            ?"fight"
+            :"hold",
+
+        selected:false,
+
+        target:null,
+
+        retreating:false,
+
+        dead:false
+    };
+
+    units.push(u);
+
+    return u;
+}
+
+
+// ============================================================
+// SPIELER
+// ============================================================
+
+createUnit(
+    "blue",
+    "rifle",
+    -120,
+    -60
+);
+
+createUnit(
+    "blue",
+    "rifle",
+    -80,
+    -90
+);
+
+createUnit(
+    "blue",
+    "rifle",
+    -120,
+    -120
+);
+
+createUnit(
+    "blue",
+    "mg",
+    -45,
+    -80
+);
+
+
+// ============================================================
+// GEGNER
+// ============================================================
+
+for(let i=0;i<10;i++){
+
+    createUnit(
+
+        "red",
+
+        "rifle",
+
+        400+
+            Math.random()*500,
+
+        -250+
+            Math.random()*600
+    );
+}
+
+
+// ============================================================
+// EINHEIT AUSWÄHLEN
+// ============================================================
+
+function findUnit(x,y){
+
+    for(let i=units.length-1;i>=0;i--){
+
+        const u=units[i];
+
+        if(u.dead)
+            continue;
+
+        if(
+            Math.hypot(
+                x-u.x,
+                y-u.y
+            )<20
+        )
+            return u;
     }
 
-    .unit {
-        border: 1px solid #555;
-        background: #20251e;
-        padding: 7px;
-        margin: 5px 0;
-        border-radius: 5px;
-        cursor: pointer;
+    return null;
+}
+
+function selectUnit(u){
+
+    if(selected)
+        selected.selected=false;
+
+    selected=u;
+
+    u.selected=true;
+
+    updateSelected();
+
+    setStatus(
+        "Ausgewählt: "+
+        (u.type==="mg"
+            ?"MG-Schütze"
+            :"Karabiner-Soldat")
+    );
+}
+
+
+// ============================================================
+// MAUS
+// ============================================================
+
+canvas.addEventListener("mousedown",e=>{
+
+    if(e.button!==0)
+        return;
+
+    const p=
+        screenToWorld(
+            e.clientX,
+            e.clientY
+        );
+
+    const clicked=
+        findUnit(p.x,p.y);
+
+    if(clicked){
+
+        if(clicked.team==="blue")
+            selectUnit(clicked);
+
+        return;
     }
 
-    .unit:hover {
-        background: #30382c;
+    if(selected){
+
+        selected.targetX=p.x;
+        selected.targetY=p.y;
+
+        selected.command=commandMode;
+
+        if(commandMode==="retreat")
+            selected.retreating=true;
+        else
+            selected.retreating=false;
+
+        setStatus(
+            "Ziel gesetzt: "+
+            Math.round(p.x)+
+            ", "+
+            Math.round(p.y)
+        );
+    }
+});
+
+
+// ============================================================
+// BEFEHLE
+// ============================================================
+
+let commandMode="fight";
+
+function setStatus(text){
+
+    document.getElementById(
+        "status"
+    ).textContent=text;
+}
+
+document.getElementById("fight")
+.onclick=()=>{
+
+    commandMode="fight";
+
+    if(selected)
+        selected.command="fight";
+
+    setStatus("Befehl: KÄMPFEN");
+};
+
+document.getElementById("hold")
+.onclick=()=>{
+
+    commandMode="hold";
+
+    if(selected)
+        selected.command="hold";
+
+    setStatus("Befehl: HALTEN");
+};
+
+document.getElementById("retreat")
+.onclick=()=>{
+
+    commandMode="retreat";
+
+    if(selected){
+
+        selected.command="retreat";
+        selected.retreating=true;
     }
 
-    .selected {
-        outline: 2px solid #fff;
+    setStatus("Befehl: RÜCKZUG");
+};
+
+document.getElementById("stop")
+.onclick=()=>{
+
+    if(selected){
+
+        selected.targetX=selected.x;
+        selected.targetY=selected.y;
+        selected.command="hold";
     }
 
-    .blue { color: #4ea4ff; }
-    .yellow { color: #ffd83d; }
-    .red { color: #ff5151; }
+    commandMode="hold";
 
-    #orders {
-        margin-top: 8px;
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 5px;
+    setStatus("Befehl: STOPP");
+};
+
+
+// ============================================================
+// UI
+// ============================================================
+
+function updateSelected(){
+
+    const box=
+        document.getElementById(
+            "selected"
+        );
+
+    if(!selected){
+
+        box.innerHTML=
+            "Keine Einheit ausgewählt.";
+
+        return;
     }
 
-    button {
-        color: white;
-        background: #3c4935;
-        border: 1px solid #68765d;
-        border-radius: 4px;
-        padding: 7px;
-        cursor: pointer;
+    const weapon=
+        selected.type==="mg"
+        ?"Maschinengewehr"
+        :"Karabiner";
+
+    box.innerHTML=
+
+        "<b>"+
+        weapon+
+        "</b><br>"+
+
+        "HP: "+
+        Math.ceil(selected.hp)+
+        "/100<br>"+
+
+        "Munition: "+
+        selected.ammo+
+        "/"+
+        selected.maxAmmo+
+        "<br>"+
+
+        "Befehl: "+
+        selected.command+
+
+        (
+            selected.reloadTimer>0
+            ?"<br><b style='color:#ffd400'>NACHLADEN</b>"
+            :""
+        );
+}
+
+
+// ============================================================
+// BEWEGUNG
+// ============================================================
+
+function isBlocked(x,y){
+
+    const cx=Math.floor(
+        x/CHUNK_SIZE
+    );
+
+    const cy=Math.floor(
+        y/CHUNK_SIZE
+    );
+
+    const chunk=getChunk(cx,cy);
+
+    const lx=
+        x-cx*CHUNK_SIZE;
+
+    const ly=
+        y-cy*CHUNK_SIZE;
+
+    for(const tree of chunk.trees){
+
+        if(
+            Math.hypot(
+                lx-tree.x,
+                ly-tree.y
+            )
+            <
+            tree.r+9
+        )
+            return true;
     }
 
-    button:hover {
-        background: #526348
+    return false;
+}
+
+function moveUnit(u,dt){
+
+    const dx=u.targetX-u.x;
+    const dy=u.targetY-u.y;
+
+    const distance=
+        Math.hypot(dx,dy);
+
+    if(distance<3)
+        return;
+
+    let vx=dx/distance;
+    let vy=dy/distance;
+
+    const nextX=
+        u.x+
+        vx*
+        u.speed*
+        dt;
+
+    const nextY=
+        u.y+
+        vy*
+        u.speed*
+        dt;
+
+    if(!isBlocked(nextX,nextY)){
+
+        u.x=nextX;
+        u.y=nextY;
+
+    }else{
+
+        // Um Hindernis herum
+        const side=
+            Math.random()>.5
+            ?1
+            :-1;
+
+        const tx=-vy*side;
+        const ty=vx*side;
+
+        u.x+=
+            tx*
+            u.speed*
+            dt;
+
+        u.y+=
+            ty*
+            u.speed*
+            dt;
+    }
+}
+
+
+// ============================================================
+// ZIEL FINDEN
+// ============================================================
+
+function nearestEnemy(u){
+
+    let best=null;
+    let bestDistance=Infinity;
+
+    for(const other of units){
+
+        if(other.dead)
+            continue;
+
+        if(other.team===u.team)
+            continue;
+
+        const d=
+            Math.hypot(
+                other.x-u.x,
+                other.y-u.y
+            );
+
+        if(d<bestDistance){
+
+            best=other;
+            bestDistance=d;
+        }
+    }
+
+    return best;
+}
+
+
+// ============================================================
+// KI
+// ============================================================
+
+function updateAI(u,dt){
+
+    if(u.dead)
+        return;
+
+    const enemy=
+        nearestEnemy(u);
+
+    if(!enemy)
+        return;
+
+    const distance=
+        Math.hypot(
+            enemy.x-u.x,
+            enemy.y-u.y
+        );
+
+    u.target=enemy;
+
+    // Gegner rücken vor
+    if(distance>u.range*.75){
+
+        u.targetX=enemy.x;
+        u.targetY=enemy.y;
+
+        moveUnit(u,dt);
+    }
+}
+
+
+// ============================================================
+// KAMPF
+// ============================================================
+
+function updateCombat(u,dt){
+
+    if(u.dead)
+        return;
+
+    // Nachladen
+    if(u.reloadTimer>0){
+
+        u.reloadTimer-=dt;
+
+        if(u.reloadTimer<=0){
+
+            u.reloadTimer=0;
+            u.ammo=u.maxAmmo;
+        }
+
+        return;
+    }
+
+    if(u.shotTimer>0)
+        u.shotTimer-=dt;
+
+    let enemy=u.target;
+
+    if(!enemy || enemy.dead)
+        enemy=nearestEnemy(u);
+
+    if(!enemy)
+        return;
+
+    const distance=
+        Math.hypot(
+            enemy.x-u.x,
+            enemy.y-u.y
+        );
+
+    if(distance>u.range)
+        return;
+
+    if(u.ammo<=0){
+
+        u.reloadTimer=u.reloadTime;
+
+        return;
+    }
+
+    if(u.shotTimer<=0){
+
+        shoot(u,enemy);
+
+        u.ammo--;
+
+        u.shotTimer=u.fireRate;
+
+        if(u.ammo<=0)
+            u.reloadTimer=u.reloadTime;
+    }
+}
+
+
+// ============================================================
+// SCHIESSEN
+// ============================================================
+
+let bullets=[];
+
+function shoot(shooter,target){
+
+    bullets.push({
+
+        x:shooter.x,
+        y:shooter.y,
+
+        tx:target.x,
+        ty:target.y,
+
+        life:.1,
+
+        enemy:
+            shooter.team==="red"
+    });
+
+
+    const distance=
+        Math.hypot(
+            target.x-shooter.x,
+            target.y-shooter.y
+        );
+
+    let accuracy=
+        shooter.type==="mg"
+        ?.58
+        :.76;
+
+    accuracy*=
+        Math.max(
+            .25,
+            1-
+            distance/shooter.range*.5
+        );
+
+    if(Math.random()<accuracy){
+
+        const damage=
+            shooter.type==="mg"
+            ?
+            4+
+            Math.random()*5
+            :
+            18+
+            Math.random()*12;
+
+        target.hp-=damage;
+
+        if(target.hp<=0){
+
+            target.hp=0;
+            target.dead=true;
+
+            if(selected===target){
+
+                selected=null;
+                updateSelected();
+            }
+        }
+    }
+}
+
+
+// ============================================================
+// WELT ZEICHNEN
+// ============================================================
+
+function drawWorld(){
+
+    ctx.fillStyle=
+        COLORS.ground1;
+
+    ctx.fillRect(
+        0,
+        0,
+        W,
+        H
+    );
+
+    const left=
+        camera.x-
+        W/(2*zoom);
+
+    const right=
+        camera.x+
+        W/(2*zoom);
+
+    const top=
+        camera.y-
+        H/(2*zoom);
+
+    const bottom=
+        camera.y+
+        H/(2*zoom);
+
+    const minCX=
+        Math.floor(left/CHUNK_SIZE)-1;
+
+    const maxCX=
+        Math.floor(right/CHUNK_SIZE)+1;
+
+    const minCY=
+        Math.floor(top/CHUNK_SIZE)-1;
+
+    const maxCY=
+        Math.floor(bottom/CHUNK_SIZE)+1;
+
+
+    for(
+        let cy=minCY;
+        cy<=maxCY;
+        cy++
+    ){
+
+        for(
+            let cx=minCX;
+            cx<=maxCX;
+            cx++
+        ){
+
+            drawChunk(
+                getChunk(cx,cy)
+            );
+        }
+    }
+}
+
+function drawChunk(chunk){
+
+    const ox=
+        chunk.cx*
+        CHUNK_SIZE;
+
+    const oy=
+        chunk.cy*
+        CHUNK_SIZE;
+
+
+    // unterschiedliche Grasfarbe
+    ctx.fillStyle=
+        (chunk.cx+chunk.cy)%2===0
+        ?COLORS.ground1
+        :COLORS.ground2;
+
+    const p=
+        worldToScreen(
+            ox,
+            oy
+        );
+
+    ctx.fillRect(
+        p.x,
+        p.y,
+        CHUNK_SIZE*zoom,
+        CHUNK_SIZE*zoom
+    );
+
+
+    // Schützengräben
+
+    for(const t of chunk.trenches){
+
+        const x=
+            ox+t.x;
+
+        const y=
+            oy+t.y;
+
+        const p=
+            worldToScreen(
+                x,
+                y
+            );
+
+        ctx.fillStyle=
+            COLORS.trench;
+
+        ctx.fillRect(
+            p.x,
+            p.y,
+            t.w*zoom,
+            t.h*zoom
+        );
+
+        ctx.strokeStyle=
+            COLORS.trenchLight;
+
+        ctx.lineWidth=
+            3*zoom;
+
+        ctx.strokeRect(
+            p.x,
+            p.y,
+            t.w*zoom,
+            t.h*zoom
+        );
+
+        // Holzstützen
+        ctx.fillStyle="#785638";
+
+        if(t.w>t.h){
+
+            for(
+                let x2=10;
+                x2<t.w;
+                x2+=35
+            ){
+
+                ctx.fillRect(
+                    p.x+x2*zoom,
+                    p.y-3*zoom,
+                    5*zoom,
+                    6*zoom
+                );
+            }
+
+        }else{
+
+            for(
+                let y2=10;
+                y2<t.h;
+                y2+=35
+            ){
+
+                ctx.fillRect(
+                    p.x-3*zoom,
+                    p.y+y2*zoom,
+                    6*zoom,
+                    5*zoom
+                );
+            }
+        }
+    }
+
+
+    // Felsen
+
+    for(const r of chunk.rocks){
+
+        const p=
+            worldToScreen(
+                ox+r.x,
+                oy+r.y
+            );
+
+        ctx.fillStyle=
+            COLORS.rock;
+
+        ctx.beginPath();
+
+        ctx.arc(
+            p.x,
+            p.y,
+            r.r*zoom,
+            0,
+            Math.PI*2
+        );
+
+        ctx.fill();
+    }
+
+
+    // Bäume
+
+    for(const tree of chunk.trees){
+
+        const p=
+            worldToScreen(
+                ox+tree.x,
+                oy+tree.y
+            );
+
+
+        // Schatten
+
+        ctx.fillStyle=
+            "rgba(0,0,0,.25)";
+
+        ctx.beginPath();
+
+        ctx.ellipse(
+            p.x,
+            p.y+7*zoom,
+            tree.r*zoom,
+            tree.r*.5*zoom,
+            0,
+            0,
+            Math.PI*2
+        );
+
+        ctx.fill();
+
+
+        // Stamm
+
+        ctx.fillStyle=
+            COLORS.trunk;
+
+        ctx.fillRect(
+            p.x-3*zoom,
+            p.y,
+            6*zoom,
+            14*zoom
+        );
+
+
+        // Baum
+
+        ctx.fillStyle=
+            COLORS.treeDark;
+
+        ctx.beginPath();
+
+        ctx.arc(
+            p.x,
+            p.y-5*zoom,
+            tree.r*zoom,
+            0,
+            Math.PI*2
+        );
+
+        ctx.fill();
+
+
+        ctx.fillStyle=
+            COLORS.tree;
+
+        ctx.beginPath();
+
+        ctx.arc(
+            p.x-5*zoom,
+            p.y-9*zoom,
+            tree.r*.7*zoom,
+            0,
+            Math.PI*2
+        );
+
+        ctx.fill();
+
+
+        ctx.fillStyle=
+            COLORS.treeLight;
+
+        ctx.beginPath();
+
+        ctx.arc(
+            p.x+5*zoom,
+            p.y-12*zoom,
+            tree.r*.45*zoom,
+            0,
+            Math.PI*2
+        );
+
+        ctx.fill();
+    }
+}
+
+
+// ============================================================
+// EINHEITEN ZEICHNEN
+// ============================================================
+
+function drawUnit(u){
+
+    if(u.dead)
+        return;
+
+    const p=
+        worldToScreen(
+            u.x,
+            u.y
+        );
+
+
+    // Auswahlring
+
+    if(u.selected){
+
+        ctx.strokeStyle=
+            "#ffffff";
+
+        ctx.lineWidth=
+            3;
+
+        ctx.beginPath();
+
+        ctx.arc(
+            p.x,
+            p.y,
+            17*zoom,
+            0,
+            Math.PI*2
+        );
+
+        ctx.stroke();
+    }
+
+
+    // Reichweitenkreis bei ausgewählter Einheit
+
+    if(u.selected){
+
+        ctx.strokeStyle=
+            "rgba(255,255,255,.16)";
+
+        ctx.lineWidth=1;
+
+        ctx.beginPath();
+
+        ctx.arc(
+            p.x,
+            p.y,
+            u.range*zoom,
+            0,
+            Math.PI*2
+        );
+
+        ctx.stroke();
+    }
+
+
+    // Schatten
+
+    ctx.fillStyle=
+        "rgba(0,0,0,.35)";
+
+    ctx.beginPath();
+
+    ctx.ellipse(
+        p.x,
+        p.y+10*zoom,
+        12*zoom,
+        5*zoom,
+        0,
+        0,
+        Math.PI*2
+    );
+
+    ctx.fill();
+
+
+    // Farbe
+
+    let color;
+
+    if(u.team==="red"){
+
+        color=COLORS.red;
+
+    }else if(u.type==="mg"){
+
+        color=COLORS.yellow;
+
+    }else{
+
+        color=COLORS.blue;
+    }
+
+
+    // Körper
+
+    ctx.fillStyle=color;
+
+    ctx.beginPath();
+
+    ctx.arc(
+        p.x,
+        p.y,
+        10*zoom,
+        0,
+        Math.PI*2
+    );
+
+    ctx.fill();
+
+
+    // Rand
+
+    ctx.strokeStyle=
+        u.team==="red"
+        ?COLORS.redDark
+        :u.type==="mg"
+        ?COLORS.yellowDark
+        :COLORS.blueDark;
+
+    ctx.lineWidth=
+        2*zoom;
+
+    ctx.stroke();
+
+
+    // Kopf
+
+    ctx.fillStyle=
+        "#c9946b";
+
+    ctx.beginPath();
+
+    ctx.arc(
+        p.x,
+        p.y-7*zoom,
+        4.5*zoom,
+        0,
+        Math.PI*2
+    );
+
+    ctx.fill();
+
+
+    // Helm
+
+    ctx.fillStyle=
+        u.team==="red"
+        ?"#5b4a39"
+        :"#536d42";
+
+    ctx.beginPath();
+
+    ctx.arc(
+        p.x,
+        p.y-8*zoom,
+        5*zoom,
+        Math.PI,
+        Math.PI*2
+    );
+
+    ctx.fill();
+
+
+    // Waffe
+
+    ctx.strokeStyle=
+        "#171717";
+
+    ctx.lineWidth=
+        3*zoom;
+
+    ctx.beginPath();
+
+    ctx.moveTo(
+        p.x+2*zoom,
+        p.y
+    );
+
+    ctx.lineTo(
+        p.x+14*zoom,
+        p.y-4*zoom
+    );
+
+    ctx.stroke();
+
+
+    // Lebensbalken
+
+    ctx.fillStyle=
+        "#181818";
+
+    ctx.fillRect(
+        p.x-14*zoom,
+        p.y-25*zoom,
+        28*zoom,
+        5*zoom
+    );
+
+    ctx.fillStyle=
+        COLORS.hp;
+
+    ctx.fillRect(
+        p.x-14*zoom,
+        p.y-25*zoom,
+        28*zoom*
+        (u.hp/100),
+        5*zoom
+    );
+
+
+    // Munition
+
+    if(u.selected){
+
+        ctx.fillStyle=
+            "#fff";
+
+        ctx.font=
+            `${10*zoom}px Arial`;
+
+        ctx.textAlign=
+            "center";
+
+        ctx.fillText(
+            u.ammo+
+            "/"+
+            u.maxAmmo,
+            p.x,
+            p.y+28*zoom
+        );
+    }
+
+
+    // Nachladen
+
+    if(u.reloadTimer>0){
+
+        ctx.fillStyle=
+            "#ffd400";
+
+        ctx.font=
+            `bold ${10*zoom}px Arial`;
+
+        ctx.textAlign=
+            "center";
+
+        ctx.fillText(
+            "NACHLADEN",
+            p.x,
+            p.y-31*zoom
+        );
+    }
+}
+
+
+// ============================================================
+// KUGELN
+// ============================================================
+
+let bullets=[];
+
+function updateBullets(dt){
+
+    for(let i=bullets.length-1;i>=0;i--){
+
+        bullets[i].life-=dt;
+
+        if(bullets[i].life<=0)
+            bullets.splice(i,1);
+    }
+}
+
+function drawBullets(){
+
+    for(const b of bullets){
+
+        const s=
+            worldToScreen(
+                b.x,
+                b.y
+            );
+
+        const t=
+            worldToScreen(
+                b.tx,
+                b.ty
+            );
+
+        ctx.strokeStyle=
+            b.enemy
+            ?"rgba(255,60,60,.9)"
+            :"rgba(255,230,80,.95)";
+
+        ctx.lineWidth=
+            2*zoom;
+
+        ctx.beginPath();
+
+        ctx.moveTo(
+            s.x,
+            s.y
+        );
+
+        ctx.lineTo(
+            t.x,
+            t.y
+        );
+
+        ctx.stroke();
+    }
+}
+
+
+// ============================================================
+// UPDATE
+// ============================================================
+
+function update(dt){
+
+    updateCamera(dt);
+
+    for(const u of units){
+
+        if(u.dead)
+            continue;
+
+        // rote KI
+
+        if(u.team==="red"){
+
+            updateAI(
+                u,
+                dt
+            );
+        }
+
+
+        // blaue Bewegung
+
+        if(
+            u.team==="blue" &&
+            u.command!=="hold"
+        ){
+
+            moveUnit(
+                u,
+                dt
+            );
+        }
+
+
+        // Kampf
+
+        updateCombat(
+            u,
+            dt
+        );
+    }
+
+    updateBullets(dt);
+
+    updateSelected();
+
+    const blue=units.filter(
+        u=>u.team==="blue"&&!u.dead
+    ).length;
+
+    const red=units.filter(
+        u=>u.team==="red"&&!u.dead
+    ).length;
+
+    document.getElementById(
+        "blueCount"
+    ).textContent=
+        "Blaue: "+blue;
+
+    document.getElementById(
+        "redCount"
+    ).textContent=
+        "Rote: "+red;
+}
+
+
+// ============================================================
+// ZEICHNEN
+// ============================================================
+
+function draw(){
+
+    drawWorld();
+
+    // zuerst rote
+    for(const u of units){
+
+        if(u.team==="red")
+            drawUnit(u);
+    }
+
+    // dann blaue
+    for(const u of units){
+
+        if(u.team==="blue")
+            drawUnit(u);
+    }
+
+    drawBullets();
+}
+
+
+// ============================================================
+// LOOP
+// ============================================================
+
+let lastTime=
+    performance.now();
+
+let frames=0;
+
+let fpsTime=
+    performance.now();
+
+function loop(now){
+
+    let dt=
+        (now-lastTime)/1000;
+
+    lastTime=now;
+
+    dt=Math.min(
+        dt,
+        .05
+    );
+
+    update(dt);
+
+    draw();
+
+    frames++;
+
+    if(now-fpsTime>=1000){
+
+        document.getElementById(
+            "fps"
+        ).textContent=
+            "FPS: "+frames;
+
+        frames=0;
+
+        fpsTime=now;
+    }
+
+    requestAnimationFrame(loop);
+}
+
+
+// ============================================================
+// START
+// ============================================================
+
+selectUnit(
+    units[0]
+);
+
+setStatus(
+    "Wähle einen Soldaten und setze ein Ziel."
+);
+
+requestAnimationFrame(loop);
+
+</script>
+
+</body>
+</html>
